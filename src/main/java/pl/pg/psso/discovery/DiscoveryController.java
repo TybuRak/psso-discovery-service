@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -30,7 +31,10 @@ public class DiscoveryController {
         this.registry = registry;
     }
 
-    /** Register (or re-register) a service. Body: {"name": "transport"}; IP taken from the connection. */
+    /**
+     * Registers an instance. Body: {"name": "transport"}; IP taken from the connection (optional "ip" overrides it).
+     * The same name from another IP adds a second instance; the same name and IP again only refreshes it.
+     */
     @PostMapping
     public ResponseEntity<?> register(@RequestBody(required = false) RegisterRequest body, HttpServletRequest request) {
         if (body == null || body.name() == null || body.name().isBlank()) {
@@ -38,25 +42,42 @@ public class DiscoveryController {
         }
         String ip = (body.ip() == null || body.ip().isBlank()) ? request.getRemoteAddr() : body.ip().trim();
         boolean created = registry.register(body.name(), ip);
-        ServiceEntry entry = registry.find(body.name()).orElseThrow();
-        log.info("{} {} -> {}", created ? "REGISTER" : "RE-REGISTER", entry.name(), entry.ip());
+        ServiceEntry entry = registry.instances(body.name()).stream()
+                .filter(e -> e.ip().equals(ip)).findFirst().orElseThrow();
+        log.info("{} {} -> {} (instances: {})", created ? "REGISTER" : "RE-REGISTER", entry.name(), entry.ip(),
+                registry.instances(entry.name()).size());
         return ResponseEntity.status(created ? HttpStatus.CREATED : HttpStatus.OK).body(entry);
     }
 
+    /** Without ?ip= removes the whole service, with ?ip= only that instance. */
     @DeleteMapping("/{name}")
-    public ResponseEntity<?> unregister(@PathVariable String name) {
-        if (!registry.unregister(name)) {
-            return error(HttpStatus.NOT_FOUND, "service not found: " + name);
+    public ResponseEntity<?> unregister(@PathVariable String name, @RequestParam(required = false) String ip) {
+        boolean removed = (ip == null || ip.isBlank()) ? registry.unregister(name) : registry.unregister(name, ip.trim());
+        if (!removed) {
+            return error(HttpStatus.NOT_FOUND, ip == null || ip.isBlank()
+                    ? "service not found: " + name
+                    : "instance not found: " + name + " " + ip);
         }
-        log.info("UNREGISTER {}", name);
+        log.info("UNREGISTER {}{}", name, ip == null || ip.isBlank() ? " (all instances)" : " " + ip);
         return ResponseEntity.noContent().build();
     }
 
+    /** One instance chosen at random: simple client-side load balancing. */
     @GetMapping("/{name}")
     public ResponseEntity<?> find(@PathVariable String name) {
         return registry.find(name)
                 .<ResponseEntity<?>>map(ResponseEntity::ok)
                 .orElseGet(() -> error(HttpStatus.NOT_FOUND, "service not found: " + name));
+    }
+
+    /** All instances of one service. */
+    @GetMapping("/{name}/instances")
+    public ResponseEntity<?> instances(@PathVariable String name) {
+        List<ServiceEntry> instances = registry.instances(name);
+        if (instances.isEmpty()) {
+            return error(HttpStatus.NOT_FOUND, "service not found: " + name);
+        }
+        return ResponseEntity.ok(instances);
     }
 
     @GetMapping

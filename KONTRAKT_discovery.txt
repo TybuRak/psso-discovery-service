@@ -4,6 +4,7 @@ Kontakt: Paweł Tyburski
 Adres: http://172.20.147.20:8080
 Format: HTTP + JSON
 Rejestr przechowuje tylko nazwę serwisu i IP (bez portów).
+Pod jedną nazwą może być kilka instancji (kilka IP): zapytanie o nazwę zwraca losowe IP (prosty load balancing).
 Dostawca: Discovery. Klienci: wszystkie zespoły.
 
 
@@ -19,14 +20,14 @@ planner       172.20.147.14   (5. Planer i integracja)
 1. REJESTRACJA: POST /services
 
 IP jest odczytywane z połączenia, więc rejestrujesz się z komputera, na którym działa Twój serwis.
-Ponowna rejestracja tej samej nazwy nadpisuje IP.
+Ta sama nazwa z innego IP dodaje drugą instancję. Ta sama nazwa z tego samego IP tylko odświeża wpis.
 
 Żądanie:
 POST /services
 Content-Type: application/json
 {"name": "transport"}
 
-Odpowiedź 201 (pierwsza rejestracja) albo 200 (nadpisanie):
+Odpowiedź 201 (nowa instancja) albo 200 (odświeżenie istniejącej):
 {"name": "transport", "ip": "172.20.147.17", "registeredAt": "2026-11-19T10:30:00Z"}
 
 Opcjonalnie IP można podać wprost (np. rejestracja z innego komputera):
@@ -39,14 +40,20 @@ Brak nazwy: 400
 2. WYREJESTROWANIE: DELETE /services/{name}
 
 Żądanie:
-DELETE /services/transport
+DELETE /services/transport                     (usuwa wszystkie instancje)
+DELETE /services/transport?ip=172.20.147.17    (usuwa jedną instancję)
 
 Odpowiedź: 204 (bez treści)
 Nieznana nazwa: 404
 {"error": "service not found: transport"}
+Nieznana instancja: 404
+{"error": "instance not found: transport 172.20.147.17"}
 
 
 3. ZAPYTANIE O IP: GET /services/{name}
+
+Zwraca jedną losową instancję. Przy dwóch instancjach kolejne zapytania trafiają raz na jedno, raz na drugie IP.
+Pytaj przed każdym wywołaniem serwisu, wtedy ruch się rozkłada.
 
 Żądanie:
 GET /services/transport
@@ -58,11 +65,18 @@ Nieznana nazwa: 404
 {"error": "service not found: transport"}
 
 
-4. LISTA WSZYSTKICH: GET /services
+4. WSZYSTKIE INSTANCJE SERWISU: GET /services/{name}/instances
+
+Odpowiedź 200:
+[{"name": "transport", "ip": "172.20.147.17", "registeredAt": "..."}, {"name": "transport", "ip": "172.20.147.18", "registeredAt": "..."}]
+Nieznana nazwa: 404
+
+
+5. LISTA WSZYSTKICH: GET /services
 
 Odpowiedź 200:
 [{"name": "transport", "ip": "172.20.147.17", "registeredAt": "2026-11-19T10:30:00Z"}]
-Gdy nikt się nie zarejestrował: []
+Każda instancja to osobny element listy. Gdy nikt się nie zarejestrował: []
 
 
 ZASADY DLA KLIENTÓW
@@ -71,7 +85,8 @@ ZASADY DLA KLIENTÓW
 2. Discovery niedostępne (timeout, brak połączenia) albo 404: używasz IP z listy wyżej. Discovery nikogo nie blokuje.
 3. Na start wszyscy mają IP wpisane na stałe. Na discovery przełączamy się, gdy integracja już działa.
 4. 404 znaczy "serwis się nie zarejestrował", a nie "serwis nie działa".
-5. Po restarcie discovery rejestr jest pusty: zarejestruj się ponownie.
+5. Rejestr przetrwa restart discovery (zapis do pliku).
+6. Przy kilku instancjach: jeśli wylosowane IP nie odpowiada, zapytaj discovery jeszcze raz.
 
 
 GOTOWE KOMENDY (curl, uruchom na komputerze swojego serwisu)
@@ -85,7 +100,13 @@ curl http://172.20.147.20:8080/services/transport
 Lista wszystkich:
 curl http://172.20.147.20:8080/services
 
-Wyrejestrowanie:
+Wszystkie instancje:
+curl http://172.20.147.20:8080/services/transport/instances
+
+Wyrejestrowanie jednej instancji:
+curl -X DELETE "http://172.20.147.20:8080/services/transport?ip=172.20.147.17"
+
+Wyrejestrowanie wszystkich instancji:
 curl -X DELETE http://172.20.147.20:8080/services/transport
 
 (w miejsce "transport" wpisz nazwę swojego serwisu z listy wyżej)

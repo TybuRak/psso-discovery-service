@@ -24,7 +24,9 @@ Wielkość liter nie ma znaczenia (`Transport` = `transport`), ale prosimy o naz
 
 ### 1. Rejestracja: `POST /services`
 Klient: każdy serwis, przy starcie albo ręcznie przez curl **z komputera, na którym działa serwis**.
-IP jest odczytywane z połączenia. Ponowna rejestracja tej samej nazwy nadpisuje IP.
+IP jest odczytywane z połączenia.
+Pod jedną nazwą może być kilka instancji (kilka IP): ta sama nazwa z innego IP dodaje instancję (`201`),
+ta sama nazwa z tego samego IP tylko odświeża wpis (`200`).
 
 ```http
 POST /services
@@ -32,7 +34,7 @@ Content-Type: application/json
 
 {"name": "transport"}
 ```
-Odpowiedź `201 Created` (pierwsza rejestracja) albo `200 OK` (nadpisanie):
+Odpowiedź `201 Created` (nowa instancja) albo `200 OK` (odświeżenie istniejącej):
 ```json
 {"name": "transport", "ip": "172.20.147.17", "registeredAt": "2026-11-19T10:30:00Z"}
 ```
@@ -42,11 +44,15 @@ Błąd `400 Bad Request`: `{"error": "name is required"}`.
 
 ### 2. Wyrejestrowanie: `DELETE /services/{name}`
 ```http
-DELETE /services/transport
+DELETE /services/transport                      (usuwa wszystkie instancje)
+DELETE /services/transport?ip=172.20.147.17     (usuwa jedną instancję)
 ```
-`204 No Content`, albo `404 Not Found`: `{"error": "service not found: transport"}`.
+`204 No Content`, albo `404 Not Found`: `{"error": "service not found: transport"}`
+lub `{"error": "instance not found: transport 172.20.147.17"}`.
 
 ### 3. Zapytanie o IP: `GET /services/{name}`
+Zwraca **jedną losową** instancję (prosty load balancing): przy dwóch instancjach kolejne zapytania trafiają
+raz na jedno, raz na drugie IP. Klient pyta przed każdym wywołaniem, żeby ruch się rozkładał.
 ```http
 GET /services/transport
 ```
@@ -56,10 +62,18 @@ GET /services/transport
 ```
 `404 Not Found`: `{"error": "service not found: transport"}`.
 
-### 4. Lista wszystkich: `GET /services`
+### 4. Wszystkie instancje jednego serwisu: `GET /services/{name}/instances`
+```json
+[{"name": "transport", "ip": "172.20.147.17", "registeredAt": "..."},
+ {"name": "transport", "ip": "172.20.147.18", "registeredAt": "..."}]
+```
+`404 Not Found`, gdy nazwa nie jest zarejestrowana.
+
+### 5. Lista wszystkich: `GET /services`
 ```json
 [{"name": "transport", "ip": "172.20.147.17", "registeredAt": "2026-11-19T10:30:00Z"}]
 ```
+Każda instancja to osobny element listy.
 
 ## Zasady dla klientów
 1. Limit oczekiwania na odpowiedź discovery: 2 s.
@@ -81,18 +95,30 @@ Java 17+, Maven. W IntelliJ: `DiscoveryServiceApplication` → Run. Z terminala:
 mvn spring-boot:run
 ```
 Inny port bez przebudowy: `PORT=9000 mvn spring-boot:run`. Serwis nasłuchuje na `0.0.0.0`, więc jest widoczny z sieci.
-Rejestr jest w pamięci: po restarcie discovery serwisy rejestrują się ponownie.
+Rejestr jest zapisywany do pliku `registry.json` (w katalogu, z którego uruchamiasz serwis) i wczytywany po restarcie.
+Inna ścieżka: `--discovery.storage-file=/sciezka/plik.json`; pusty parametr wyłącza zapis.
 
 ## Pracownia (komputer 172.20.147.20)
-Gotowy plik `discovery-service-1.0.0.jar` jest w zakładce Releases repozytorium. Na komputerze w pracowni:
+Gotowy plik `discovery-service-1.1.0.jar` jest w zakładce Releases repozytorium. Na komputerze w pracowni:
 ```bash
 java -version                      # potrzebna Java 17 albo nowsza
-wget https://github.com/TybuRak/psso-discovery-service/releases/download/v1.0.0/discovery-service-1.0.0.jar
-java -jar discovery-service-1.0.0.jar          # albo: PORT=80 java -jar discovery-service-1.0.0.jar
+wget https://github.com/TybuRak/psso-discovery-service/releases/download/v1.1.0/discovery-service-1.1.0.jar
+java -jar discovery-service-1.1.0.jar          # albo: PORT=80 java -jar discovery-service-1.1.0.jar
 ```
 Brak Javy i brak uprawnień do instalacji: przenośny JDK do katalogu domowego (bez sudo):
 ```bash
 wget -O jdk.tar.gz "https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jdk/hotspot/normal/eclipse"
-tar xzf jdk.tar.gz && ./jdk-21*/bin/java -jar discovery-service-1.0.0.jar
+tar xzf jdk.tar.gz && ./jdk-21*/bin/java -jar discovery-service-1.1.0.jar
 ```
 Sprawdzenie z innego komputera w sieci: `curl http://172.20.147.20:8080/services` powinno zwrócić `[]`.
+
+## Aktualizacja działającego serwisu (1.0.0 -> 1.1.0) bez utraty rejestracji
+API jest zgodne wstecz: te same żądania i odpowiedzi, klienci nic nie zmieniają.
+```bash
+cd ~
+wget https://github.com/TybuRak/psso-discovery-service/releases/download/v1.1.0/discovery-service-1.1.0.jar
+curl -s http://localhost:8080/services > registry.json      # zrzut rejestru ze starej wersji
+# w oknie starej wersji: Ctrl+C
+~/jdk-21*/bin/java -jar ~/discovery-service-1.1.0.jar       # w logach: "Loaded N instance(s)"
+```
+Przerwa trwa około 2 sekund; w tym czasie klienci korzystają z adresów awaryjnych.

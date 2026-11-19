@@ -13,7 +13,7 @@
 
     <groupId>pl.pg.psso</groupId>
     <artifactId>discovery-service</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
     <name>psso-discovery-service</name>
 
     <properties>
