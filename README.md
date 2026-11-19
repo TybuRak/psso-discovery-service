@@ -76,9 +76,23 @@ curl -X DELETE http://172.20.147.20:8080/services/transport
 ```
 
 ## Uruchomienie
-Java 21, Maven. W IntelliJ: `DiscoveryServiceApplication` → Run. Z terminala:
+Java 17+, Maven. W IntelliJ: `DiscoveryServiceApplication` → Run. Z terminala:
 ```bash
 mvn spring-boot:run
 ```
 Inny port bez przebudowy: `PORT=9000 mvn spring-boot:run`. Serwis nasłuchuje na `0.0.0.0`, więc jest widoczny z sieci.
 Rejestr jest w pamięci: po restarcie discovery serwisy rejestrują się ponownie.
+
+## Pracownia (komputer 172.20.147.20)
+Gotowy plik `discovery-service-1.0.0.jar` jest w zakładce Releases repozytorium. Na komputerze w pracowni:
+```bash
+java -version                      # potrzebna Java 17 albo nowsza
+wget https://github.com/TybuRak/psso-discovery-service/releases/download/v1.0.0/discovery-service-1.0.0.jar
+java -jar discovery-service-1.0.0.jar          # albo: PORT=80 java -jar discovery-service-1.0.0.jar
+```
+Brak Javy i brak uprawnień do instalacji: przenośny JDK do katalogu domowego (bez sudo):
+```bash
+wget -O jdk.tar.gz "https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jdk/hotspot/normal/eclipse"
+tar xzf jdk.tar.gz && ./jdk-21*/bin/java -jar discovery-service-1.0.0.jar
+```
+Sprawdzenie z innego komputera w sieci: `curl http://172.20.147.20:8080/services` powinno zwrócić `[]`.
